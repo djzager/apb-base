@@ -4,6 +4,13 @@ if [[ $BUNDLE_DEBUG == "true" ]]; then
     set -x
 fi
 
+if [[ $ANSIBLE_RUNNER == "true" ]]; then
+    ls /runner
+    exit $?
+else
+    echo "DEPRECATED: should totally use ansible-runner"
+fi
+
 # Work-Around
 # The OpenShift's s2i (source to image) requires that no ENTRYPOINT exist
 # for any of the s2i builder base images.  Our 's2i-apb' builder uses the
