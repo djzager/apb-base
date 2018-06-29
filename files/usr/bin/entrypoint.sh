@@ -25,9 +25,14 @@ fi
 
 ACTION=$1
 shift
-playbooks=/opt/apb/actions
+mv /opt/apb/actions /opt/apb/project
+playbooks="/opt/apb/project"
 CREDS="/var/tmp/bind-creds"
+SECRETS_DIR="/etc/apb-secrets"
 TEST_RESULT="/var/tmp/test-result"
+ROLE_NAME=$(echo $2 | jq -r .role_name 2>/dev/null || echo "null")
+ROLE_NAMESPACE=$(echo $2 | jq -r .role_name 2>/dev/null || echo "null")
+MOUNTED_SECRETS=$(ls $SECRETS_DIR)
 
 if ! whoami &> /dev/null; then
   if [ -w /etc/passwd ]; then
@@ -35,30 +40,38 @@ if ! whoami &> /dev/null; then
   fi
 fi
 
-SECRETS_DIR=/etc/apb-secrets
-mounted_secrets=$(ls $SECRETS_DIR)
+extra_args="${@}"
+if [[ ! -z "$MOUNTED_SECRETS" ]] ; then
+  echo '---' > /opt/apb/env/passwords
 
-extra_args=""
-if [[ ! -z "$mounted_secrets" ]] ; then
-
-    echo '---' > /tmp/secrets
-
-    for key in ${mounted_secrets} ; do
-      for file in $(ls ${SECRETS_DIR}/${key}/..data); do
-        echo "$file: $(cat ${SECRETS_DIR}/${key}/..data/${file})" >> /tmp/secrets
-      done
+  for key in ${MOUNTED_SECRETS} ; do
+    for file in $(ls ${SECRETS_DIR}/${key}/..data); do
+      echo "$file: $(cat ${SECRETS_DIR}/${key}/..data/${file})" >> /opt/apb/env/passwords
     done
-    extra_args='--extra-vars no_log=true --extra-vars @/tmp/secrets'
+  done
+  extra_args="${extra_args} --extra-vars no_log=true"
+fi
+
+echo "${extra_args}" > /opt/apb/env/cmdline
+
+# Install role from galaxy
+if [[ $ROLE_NAME != "null" ]] && [[ $ROLE_NAMESPACE != "null" ]]; then
+  ansible-galaxy install -s https://galaxy-qa.ansible.com $ROLE_NAMESPACE.$ROLE_NAME -p /opt/ansible/roles
+  mv /opt/ansible/roles/$ROLE_NAMESPACE.$ROLE_NAME /opt/ansible/roles/$ROLE_NAME
+  mv /opt/ansible/roles/$ROLE_NAME/playbooks $playbooks
 fi
 
 if [[ -e "$playbooks/$ACTION.yaml" ]]; then
-  ANSIBLE_ROLES_PATH=/etc/ansible/roles:/opt/ansible/roles ansible-playbook -i /etc/ansible/hosts $playbooks/$ACTION.yaml "${@}" ${extra_args}
+  PLAYBOOK="$playbooks/$ACTION.yaml"
 elif [[ -e "$playbooks/$ACTION.yml" ]]; then
-  ANSIBLE_ROLES_PATH=/etc/ansible/roles:/opt/ansible/roles ansible-playbook -i /etc/ansible/hosts $playbooks/$ACTION.yml  "${@}" ${extra_args}
+  PLAYBOOK="$playbooks/$ACTION.yml"
 else
   echo "'$ACTION' NOT IMPLEMENTED" # TODO
   exit 8 # action not found
 fi
+
+# Invoke ansible-runner
+ansible-runner run --playbook $PLAYBOOK /opt/apb
 
 EXIT_CODE=$?
 
@@ -67,7 +80,7 @@ rm -f /tmp/secrets
 set -e
 
 if [ -f $TEST_RESULT ]; then
-   test-retrieval-init
+  test-retrieval-init
 fi
 
 exit $EXIT_CODE
